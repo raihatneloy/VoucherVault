@@ -28,6 +28,11 @@ urlpatterns = i18n_patterns(
 
 urlpatterns.append(path("", include("pwa.urls")))
 
+# Non-i18n API endpoints (no language prefix needed)
+from myapp import views as myapp_views
+urlpatterns.append(path('items/<uuid:item_uuid>/check-balance/', myapp_views.check_balance, name='check_balance_api'))
+
+
 # Conditionally include OIDC URLs if OIDC_ENABLED is False
 if not settings.OIDC_ENABLED:
     urlpatterns.append(path('accounts/password_change/', auth_views.PasswordChangeView.as_view(template_name='registration/password_change_form.html'), name='password_change'))

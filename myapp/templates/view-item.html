@@ -1212,7 +1212,8 @@ body.dark-mode .live-balance-timestamp {
               <i class="bi bi-share"></i> {% trans "Share" %}
             </a>
             {% if item.type == "giftcard" and item.balance_checker != "none" and not item.is_used %}
-            <button type="button" id="check-balance-btn" class="action-btn action-btn-primary" data-item-id="{{ item.id }}">
+            {% csrf_token %}
+            <button type="button" id="check-balance-btn" class="action-btn action-btn-primary" data-item-id="{{ item.id }}" data-check-url="{% url 'check_balance' item_uuid=item.id %}">
               <i class="bi bi-arrow-repeat"></i>
               <span class="btn-text">{% trans "Check Balance" %}</span>
               <span class="spinner"></span>
@@ -1592,20 +1593,13 @@ document.addEventListener("DOMContentLoaded", function() {
   
   if (!checkBtn) return;
   
-  // Get CSRF token from the cookie
-  function getCookie(name) {
-    let cookieValue = null;
-    if (document.cookie && document.cookie !== '') {
-      const cookies = document.cookie.split(';');
-      for (let i = 0; i < cookies.length; i++) {
-        const cookie = cookies[i].trim();
-        if (cookie.substring(0, name.length + 1) === (name + '=')) {
-          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-          break;
-        }
-      }
-    }
-    return cookieValue;
+  // Get CSRF token from Django's csrfmiddlewaretoken input
+  function getCSRFToken() {
+    const input = document.querySelector('input[name="csrfmiddlewaretoken"]');
+    if (input) return input.value;
+    // Fallback: try reading cookie (may be HttpOnly and fail)
+    const match = document.cookie.match(/csrftoken=([^;]+)/);
+    return match ? match[1] : '';
   }
   
   async function checkBalance() {
@@ -1619,10 +1613,10 @@ document.addEventListener("DOMContentLoaded", function() {
     }
     
     try {
-      const response = await fetch('/items/' + itemId + '/check-balance/', {
+      const response = await fetch(checkBtn.dataset.checkUrl, {
         method: 'POST',
         headers: {
-          'X-CSRFToken': getCookie('VVSESS') || getCookie('csrftoken'),
+          'X-CSRFToken': getCSRFToken(),
           'X-Requested-With': 'XMLHttpRequest',
         },
       });
