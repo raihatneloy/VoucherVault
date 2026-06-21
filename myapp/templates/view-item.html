@@ -1066,6 +1066,35 @@ body.dark-mode .live-balance-section.error .live-balance-amount {
 body.dark-mode .live-balance-timestamp {
   color: #666;
 }
+
+
+.balance-toast {
+  padding: 14px 20px;
+  border-radius: 10px;
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  transform: translateX(120%);
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  max-width: 360px;
+  line-height: 1.4;
+}
+.balance-toast.show {
+  transform: translateX(0);
+}
+.balance-toast.success {
+  background: #198754;
+}
+.balance-toast.error {
+  background: #dc3545;
+}
+.balance-toast .toast-icon {
+  margin-right: 8px;
+}
+body.dark-mode .balance-toast {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
 </style>
 
 <div class="detail-header">
@@ -1212,12 +1241,13 @@ body.dark-mode .live-balance-timestamp {
               <i class="bi bi-share"></i> {% trans "Share" %}
             </a>
             {% if item.type == "giftcard" and item.balance_checker != "none" and not item.is_used %}
-            {% csrf_token %}
-            <button type="button" id="check-balance-btn" class="action-btn action-btn-primary" data-item-id="{{ item.id }}" data-check-url="{% url 'check_balance' item_uuid=item.id %}">
-              <i class="bi bi-arrow-repeat"></i>
-              <span class="btn-text">{% trans "Check Balance" %}</span>
-              <span class="spinner"></span>
-            </button>
+            <form action="{% url 'check_balance_api' item_uuid=item.id %}" method="post" style="display:contents;">
+              {% csrf_token %}
+              <button type="submit" class="action-btn action-btn-primary" style="display:inline-flex;align-items:center;gap:0.5rem;">
+                <i class="bi bi-arrow-repeat"></i>
+                <span>{% trans "Check Balance" %}</span>
+              </button>
+            </form>
             {% endif %}
             {% if item.type != "loyaltycard" %}
             <form action="{% url 'toggle_item_status' item.id %}" method="post" style="display:contents;">
@@ -1236,7 +1266,7 @@ body.dark-mode .live-balance-timestamp {
             </form>
           </div>
           {% endif %}
-          
+
           <!-- Shared Users Section (Owner only) -->
           {% if is_owner and is_shared %}
           <div class="shared-users-card">
@@ -1582,75 +1612,5 @@ document.addEventListener("DOMContentLoaded", function() {
   closeBtn?.addEventListener('click', closeOverlay);
 });
 </script>
-
-{% if item.type == "giftcard" and item.balance_checker != "none" and not item.is_used %}
-<script>
-document.addEventListener("DOMContentLoaded", function() {
-  const checkBtn = document.getElementById('check-balance-btn');
-  const balanceValue = document.getElementById('live-balance-value');
-  const balanceTimestamp = document.getElementById('live-balance-timestamp');
-  const balanceField = document.getElementById('live-balance-field');
-  
-  if (!checkBtn) return;
-  
-  // Get CSRF token from Django's csrfmiddlewaretoken input
-  function getCSRFToken() {
-    const input = document.querySelector('input[name="csrfmiddlewaretoken"]');
-    if (input) return input.value;
-    // Fallback: try reading cookie (may be HttpOnly and fail)
-    const match = document.cookie.match(/csrftoken=([^;]+)/);
-    return match ? match[1] : '';
-  }
-  
-  async function checkBalance() {
-    const itemId = checkBtn.dataset.itemId;
-    checkBtn.disabled = true;
-    checkBtn.classList.add('loading');
-    
-    // Reset error styling
-    if (balanceField) {
-      balanceField.closest('.detail-field')?.classList.remove('error');
-    }
-    
-    try {
-      const response = await fetch(checkBtn.dataset.checkUrl, {
-        method: 'POST',
-        headers: {
-          'X-CSRFToken': getCSRFToken(),
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        const formattedBalance = parseFloat(data.balance).toFixed(2) + ' ' + data.currency;
-        balanceValue.innerHTML = '<span style="color:#198754">' + formattedBalance + '</span>';
-        
-        if (balanceTimestamp) {
-          const d = new Date(data.last_checked_at);
-          balanceTimestamp.innerHTML = '<small>{% trans "Last checked" %}: ' + 
-            d.toLocaleDateString('en-IE', { month: 'short', day: 'numeric' }) + ', ' +
-            d.toLocaleTimeString('en-IE', { hour: '2-digit', minute: '2-digit' }) + '</small>';
-        }
-      } else {
-        const errorMsg = data.error || '{% trans "Balance check failed" %}';
-        balanceValue.innerHTML = '<span style="color:#dc3545;font-size:0.85rem">' + errorMsg + '</span>';
-        if (balanceField) {
-          balanceField.closest('.detail-field')?.classList.add('error');
-        }
-      }
-    } catch (err) {
-      balanceValue.innerHTML = '<span style="color:#dc3545;font-size:0.85rem">{% trans "Network error" %}</span>';
-    } finally {
-      checkBtn.disabled = false;
-      checkBtn.classList.remove('loading');
-    }
-  }
-  
-  checkBtn.addEventListener('click', checkBalance);
-});
-</script>
-{% endif %}
 
 {% endblock content %}
