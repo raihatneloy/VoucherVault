@@ -22,7 +22,13 @@ class LidlIEProvider(BaseBalanceChecker):
 
     display_name = "Lidl Ireland"
     base_url = "https://www.lidl.ie/gift-cards/"
-    api_endpoint = "https://www.lidl.ie/api/giftcards/balance"
+    
+    # Known API endpoints to try (in order)
+    API_ENDPOINTS = [
+        "https://www.lidl.ie/api/giftcards/balance",
+        "https://giftcard.lidl.ie/api/v1/balance",
+        "https://www.lidl.ie/gift-cards/check-balance",
+    ]
 
     def _fetch_csrf_token(self, session: requests.Session) -> Optional[str]:
         """
@@ -39,6 +45,8 @@ class LidlIEProvider(BaseBalanceChecker):
             'Accept-Language': 'en-IE,en;q=0.9',
         }
         
+        # Track last error for fallback message
+        last_error = 'All API endpoints failed'
         try:
             resp = session.get(self.base_url, headers=headers, timeout=15)
             resp.raise_for_status()
@@ -89,7 +97,7 @@ class LidlIEProvider(BaseBalanceChecker):
         # First, fetch the page to get CSRF token
         csrf_token = self._fetch_csrf_token(session)
         
-        # Build headers for the API request
+        # Build shared headers
         headers = {
             'User-Agent': (
                 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
@@ -113,15 +121,21 @@ class LidlIEProvider(BaseBalanceChecker):
         }
 
         try:
-            resp = session.post(
-                self.api_endpoint,
-                json=payload,
-                headers=headers,
-                timeout=15,
-            )
+            for endpoint in self.API_ENDPOINTS:
+                resp = session.post(
+                    endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=15,
+                )
             
-            # Handle HTTP errors
-            if resp.status_code == 401 or resp.status_code == 403:
+                # 404 = wrong endpoint, try next
+                if resp.status_code == 404:
+                    last_error = f"Endpoint not found: {endpoint}"
+                    continue
+                
+                # Handle specific HTTP errors
+                if resp.status_code == 401 or resp.status_code == 403:
                 return BalanceResult(
                     success=False,
                     error="Invalid card number or PIN. Please check and try again."
