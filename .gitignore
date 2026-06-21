@@ -39,3 +39,20 @@ acme.json
 
 # ignore file uploads
 **/uploads/**
+# Node modules
+balance-worker/node_modules/
+captcha-solver/node_modules/
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Docker volumes
+volume-data/
+
+# IDE
+.idea/
+.vscode/
