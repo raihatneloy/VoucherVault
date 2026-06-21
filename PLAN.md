@@ -29,24 +29,24 @@
 
 ## Phase 1: Data Model
 
-- [ ] **1.1 — Add fields to `Item` model**
+- [x] **1.1 — Add fields to `Item` model**
   - `balance_checker` (CharField: `lidl_ie`, `dunnes_ie`, `supervalu_ie`, `tesco_ie`, or `none`)
   - `last_checked_balance` (DecimalField, nullable)
   - `last_checked_at` (DateTimeField, nullable)
   - `live_balance` (DecimalField, nullable — the most recently fetched balance)
-- [ ] **1.2 — Generate & run migration**
-- [ ] **1.3 — Update `ItemForm`** → add `balance_checker` dropdown to create/edit forms
+- [x] **1.2 — Generate & run migration**
+- [x] **1.3 — Update `ItemForm`** → add `balance_checker` dropdown to create/edit forms
 - [ ] **1.4 — Update `UserPreference` model** (optional) → `auto_check_balance` toggle
 
 ---
 
 ## Phase 2: Balance Checker Engine
 
-- [ ] **2.1 — Create `myapp/balance_checkers/` package**
+- [x] **2.1 — Create `myapp/balance_checkers/` package**
   - `__init__.py`
   - `base.py` → abstract `BalanceChecker` class with `check_balance(card_number, pin) → BalanceResult`
   - `providers/` directory
-- [ ] **2.2 — Implement `LidlIEProvider`**
+- [x] **2.2 — Implement `LidlIEProvider`**
   - Fetches CSRF token from `lidl.ie/gift-cards/`
   - POSTs `{cardNumber, pin}` to `lidl.ie/api/giftcards/balance`
   - Parses `{status, balance, currency}`
@@ -62,7 +62,7 @@
   - GET `tesco.ie/gift-cards/giftcardbalance/`, parse `__VIEWSTATE`/`__EVENTVALIDATION`
   - POST back form data + card details
   - Scrape balance from returned HTML
-- [ ] **2.6 — Build `ProviderRegistry`**
+- [x] **2.6 — Build `ProviderRegistry`**
   - Maps `balance_checker` string → provider class
   - `get_provider(checker_type) → BalanceChecker`
 
@@ -70,11 +70,11 @@
 
 ## Phase 3: API & View Integration
 
-- [ ] **3.1 — Add `check_balance` view** (POST endpoint)
+- [x] **3.1 — Add `check_balance` view** (POST endpoint)
   - Takes `item_uuid`, calls provider, updates `last_checked_balance`/`last_checked_at`
   - Returns JSON: `{success, balance, currency, error}`
-- [ ] **3.2 — Add URL route** → `POST /items/<uuid:item_uuid>/check-balance/`
-- [ ] **3.3 — Update `view-item.html`**
+- [x] **3.2 — Add URL route** → `POST /items/<uuid:item_uuid>/check-balance/`
+- [x] **3.3 — Update `view-item.html`**
   - Show "Check Balance" button (only for gift cards with a balance checker set)
   - Display live balance with timestamp
   - Loading state while checking
