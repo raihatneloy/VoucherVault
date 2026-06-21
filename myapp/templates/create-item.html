@@ -693,6 +693,19 @@ body.dark-mode .error-alert {
                 {% endfor %}
               </select>
             </div>
+
+            <!-- Balance Checker (Ireland) -->
+            <div class="form-group" id="balance-checker-field" style="display:none;">
+              <label class="form-label" for="balance_checker">
+                <i class="bi bi-arrow-repeat"></i> {% trans "Balance Checker" %}
+              </label>
+              <select class="modern-select" id="balance_checker" name="balance_checker">
+                {% for code, label in form.fields.balance_checker.choices %}
+                <option value="{{ code }}" {% if form.balance_checker.value == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+              <small class="form-hint">{% trans "Auto-check live balance with this retailer" %}</small>
+            </div>
           </div>
           
           <!-- Additional Info Section -->
@@ -798,6 +811,7 @@ document.addEventListener("DOMContentLoaded", function () {
       redeemCodeLabel.innerHTML = "{% trans 'Loyalty ID' %} <span class='required'>*</span>";
       redeemCodeField.placeholder = "{% trans 'Loyalty card number or customer ID' %}";
       document.getElementById('currency-field').style.display = 'none';
+      document.getElementById('balance-checker-field').style.display = 'none';
     } else {
       pinField.readOnly = false;
       valueField.readOnly = false;
@@ -810,6 +824,13 @@ document.addEventListener("DOMContentLoaded", function () {
       const currencyField = document.getElementById('currency-field');
       if (valueTypeField.value === 'money') {
         currencyField.style.display = '';
+        // Show balance checker only for gift cards
+        const bcField_ = document.getElementById("balance-checker-field");
+        if (bcField_ && typeField.value === "giftcard") {
+          bcField_.style.display = "";
+        } else if (bcField_) {
+          bcField_.style.display = "none";
+        }
       }
     }
 

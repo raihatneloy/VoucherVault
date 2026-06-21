@@ -1,0 +1,25 @@
+services:
+
+  app:
+    image: l4rm4nd/vouchervault:1.28.x
+    container_name: vouchervault
+    restart: unless-stopped
+    environment:
+      - DOMAIN=192.168.86.47
+      - SECURE_COOKIES=False
+      - EXPIRY_THRESHOLD_DAYS=90
+      - TZ=Europe/Dublin
+      - SESSION_EXPIRE_AT_BROWSER_CLOSE=False
+    expose:
+      - 8000
+    ports:
+      - 8000:8000
+    volumes:
+      - ./volume-data/database:/opt/app/database
+
+  redis:
+    image: redis:7-alpine
+    container_name: vouchervault-redis
+    restart: unless-stopped
+    expose:
+      - 6379
