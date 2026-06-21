@@ -117,3 +117,13 @@
 
 Each commit closes one task (e.g. `git commit -m "1.1: Add balance_checker fields to Item model"`).
 Run `cat PLAN.md` anytime to see the latest status.
+
+## Implementation Notes
+
+### Lidl Ireland API (June 2026)
+
+**API endpoint**: `POST https://www.lidl.ie/explore/giftyBalanceV2/gifty`
+**Payload**: `{cardNumber, pinNumber, country: "IE", locale: "en-IE", frcCaptchaToken: "...",}`
+**Balance**: Amount in cents (5000 = 50.00 EUR)
+**Balance check page**: `https://www.lidl.ie/c/gift-card-balance-check/s10073374`
+**Friendly Captcha**: Required (sitekey `FCMGDDIJTON17UAD`). A modal with the widget opens when user clicks "Check Balance" — auto-solves via PoW in the browser in 1-3 seconds.

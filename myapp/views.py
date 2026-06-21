@@ -30,6 +30,26 @@ from django.utils.text import get_valid_filename
 from myapp.balance_checkers import get_provider
 
 
+import urllib.request
+
+@require_GET
+def captcha_puzzle_proxy(request):
+    """Proxy the Friendly Captcha puzzle endpoint to avoid CDN/network blocks."""
+    sitekey = request.GET.get('sitekey', 'FCMGDDIJTON17UAD')
+    url = f'https://eu.frcapi.com/api/v1/puzzle?sitekey={sitekey}'
+    try:
+        req = urllib.request.Request(url, headers={
+            'x-frc-client': 'js-0.9.20',
+            'User-Agent': 'Mozilla/5.0',
+        })
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = resp.read()
+        return HttpResponse(data, content_type='application/json')
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=502)
+
+
+
 apprise_txt = _('Apprise URLs were already configured. Will not display them again here to protect secrets. You can freely re-configure the URLs now and hit update though.')
 
 def has_item_access(item, user):
@@ -941,33 +961,134 @@ def check_balance(request, item_uuid):
     try:
         item = Item.objects.get(id=item_uuid, user=request.user)
     except Item.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Item not found'}, status=404)
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': False, 'error': 'Item not found'}, status=404)
+        messages.error(request, _("Item not found."))
+        return redirect('show_items')
     
-    # Only gift cards with a balance checker configured
     if item.type != 'giftcard':
-        return JsonResponse({'success': False, 'error': 'Balance check is only available for gift cards'})
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': False, 'error': 'Balance check is only available for gift cards'})
+        messages.error(request, _("Balance check is only available for gift cards."))
+        return redirect('view_item', item_uuid=item.id)
     
     if item.balance_checker == 'none' or not item.balance_checker:
-        return JsonResponse({'success': False, 'error': 'No balance checker configured for this item'})
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': False, 'error': 'No balance checker configured for this item'})
+        messages.error(request, _("No balance checker configured for this item."))
+        return redirect('view_item', item_uuid=item.id)
     
-    # Get the provider
     provider = get_provider(item.balance_checker)
     if not provider:
-        return JsonResponse({'success': False, 'error': f'Unknown balance checker: {item.balance_checker}'})
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': False, 'error': f'Unknown balance checker: {item.balance_checker}'})
+        messages.error(request, _("Unknown balance checker."))
+        return redirect('view_item', item_uuid=item.id)
     
-    # Check balance
-    result = provider.check_balance(item.redeem_code, item.pin or '')
+    frc_captcha_token = request.POST.get('frc_captcha_token') or ''
+    try:
+        result = provider.check_balance(
+            item.redeem_code,
+            item.pin or '',
+            frc_captcha_token=frc_captcha_token,
+        )
+        
+        if result.success:
+            item.live_balance = result.balance
+        item.last_checked_at = timezone.now()
+        item.save(update_fields=['live_balance', 'last_checked_at'])
+    except Exception as e:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': False, 'error': str(e)[:200]})
+        messages.error(request, _("Balance check error: %(error)s") % {'error': str(e)[:100]})
+        return redirect('view_item', item_uuid=item.id)
     
-    # Update item with results
+    # XHR mode: return JSON
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return JsonResponse({
+            'success': result.success,
+            'balance': result.balance,
+            'currency': result.currency,
+            'error': result.error,
+            'last_checked_at': item.last_checked_at.isoformat() if item.last_checked_at else None,
+        })
+    
+    # Form POST mode: redirect with message
     if result.success:
-        item.live_balance = result.balance
-    item.last_checked_at = timezone.now()
-    item.save(update_fields=['live_balance', 'last_checked_at'])
+        formatted = f"{result.balance:.2f} {result.currency}"
+        messages.success(request, _("Balance updated: %(balance)s") % {'balance': formatted})
+    else:
+        messages.error(request, result.error or _("Balance check failed."))
+    
+    return redirect('view_item', item_uuid=item.id)
+
+
+@login_required
+@require_POST
+def api_check_balance(request, item_uuid):
+    """
+    Launch an async Celery balance check for this item.
+    Returns immediately with the task ID so the frontend can poll for status.
+    """
+    from myapp.tasks import check_item_balance as check_balance_task
+    
+    try:
+        item = Item.objects.get(id=item_uuid, user=request.user)
+    except Item.DoesNotExist:
+        return JsonResponse({"success": False, "error": "Item not found"}, status=404)
+    
+    if item.type != "giftcard":
+        return JsonResponse({"success": False, "error": "Not a gift card"})
+    
+    if item.balance_checker == "none" or not item.balance_checker:
+        return JsonResponse({"success": False, "error": "No balance checker configured"})
+    
+    # Launch async task
+    task = check_balance_task.delay(str(item.id))
     
     return JsonResponse({
-        'success': result.success,
-        'balance': result.balance,
-        'currency': result.currency,
-        'error': result.error,
-        'last_checked_at': item.last_checked_at.isoformat() if item.last_checked_at else None,
+        "success": True,
+        "task_id": task.id,
+        "message": "Balance check started",
+    })
+
+
+@login_required
+@require_GET
+def api_balance_status(request, task_id):
+    """
+    Poll the status of a balance check Celery task.
+    Returns PENDING / SUCCESS / FAILURE with result data.
+    """
+    task_id = str(task_id)  # Convert UUID from URL param to string for Celery
+    from celery.result import AsyncResult
+    
+    result = AsyncResult(task_id)
+    
+    if result.state == "PENDING":
+        return JsonResponse({
+            "state": "PENDING",
+            "info": None,
+        })
+    
+    if result.state == "SUCCESS":
+        data = result.result
+        return JsonResponse({
+            "state": "SUCCESS",
+            "info": data,
+        })
+    
+    if result.state == "FAILURE":
+        return JsonResponse({
+            "state": "FAILURE",
+            "info": {
+                "success": False,
+                "error": str(result.result) if result.result else "Task failed",
+            },
+        })
+    
+    # RETRY, STARTED etc.
+    return JsonResponse({
+        "state": result.state,
+        "info": None,
     })

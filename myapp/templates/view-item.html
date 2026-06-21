@@ -1241,13 +1241,13 @@ body.dark-mode .balance-toast {
               <i class="bi bi-share"></i> {% trans "Share" %}
             </a>
             {% if item.type == "giftcard" and item.balance_checker != "none" and not item.is_used %}
-            <form action="{% url 'check_balance_api' item_uuid=item.id %}" method="post" style="display:contents;">
-              {% csrf_token %}
-              <button type="submit" class="action-btn action-btn-primary" style="display:inline-flex;align-items:center;gap:0.5rem;">
+            
+              <button type="button" id="check-balance-btn" class="action-btn action-btn-primary" style="display:inline-flex;align-items:center;gap:0.5rem;" data-item-id="{{ item.id }}">
                 <i class="bi bi-arrow-repeat"></i>
-                <span>{% trans "Check Balance" %}</span>
+                <span class="btn-text">{% trans "Check Balance" %}</span>
+                <span class="spinner-border spinner-border-sm" role="status" style="display:none;"></span>
               </button>
-            </form>
+            
             {% endif %}
             {% if item.type != "loyaltycard" %}
             <form action="{% url 'toggle_item_status' item.id %}" method="post" style="display:contents;">
@@ -1256,14 +1256,14 @@ body.dark-mode .balance-toast {
                 <i class="bi bi-check-circle"></i>
                 {% if item.is_used %}{% trans "Mark Available" %}{% else %}{% trans "Mark Used" %}{% endif %}
               </button>
-            </form>
+            
             {% endif %}
             <form action="{% url 'delete_item' item.id %}" method="post" style="display:contents;">
               {% csrf_token %}
               <button type="submit" class="action-btn action-btn-danger" onclick="return confirm('{% trans "Are you sure to delete?" %}');">
                 <i class="bi bi-trash"></i> {% trans "Delete" %}
               </button>
-            </form>
+            
           </div>
           {% endif %}
 
@@ -1284,7 +1284,7 @@ body.dark-mode .balance-toast {
                 <button type="submit" class="btn btn-danger unshare-btn" onclick="return confirm('{% trans "Are you sure you want to unshare this item?" %}');">
                   {% trans "Unshare" %}
                 </button>
-              </form>
+              
             </div>
             {% empty %}
             <p class="text-muted mb-0">{% trans "This item is not shared with anyone." %}</p>
@@ -1352,7 +1352,7 @@ body.dark-mode .balance-toast {
                     <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('{% trans "Are you sure to delete?" %}');">
                       <i class="bi bi-trash"></i>
                     </button>
-                  </form>
+                  
                 </td>
               </tr>
               {% empty %}
@@ -1379,7 +1379,7 @@ body.dark-mode .balance-toast {
                 <i class="bi bi-plus-lg"></i> {% trans "Add" %}
               </button>
             </div>
-          </form>
+          
           
           {% if form.errors %}
           <div class="alert alert-danger mt-3">
@@ -1613,4 +1613,110 @@ document.addEventListener("DOMContentLoaded", function() {
 });
 </script>
 
+<!-- Toast notification container for balance check -->
+<div id="balance-toast-container" style="position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none;"></div>
+
+<script id="async-balance-check-js">
+document.addEventListener("DOMContentLoaded", function() {
+  var btn = document.getElementById("check-balance-btn");
+  var balVal = document.getElementById("live-balance-value");
+  var balTs = document.getElementById("live-balance-timestamp");
+  var toastC = document.getElementById("balance-toast-container");
+  if (!btn) return;
+
+  function getCSRF() {
+    var el = document.querySelector("input[name=csrfmiddlewaretoken]");
+    if (el) return el.value;
+    var m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : "";
+  }
+
+  function toast(msg, type) {
+    if (!toastC) return;
+    var t = document.createElement("div");
+    t.style.cssText = "padding:12px 20px;border-radius:10px;color:#fff;font-size:0.9rem;font-weight:500;box-shadow:0 4px 16px rgba(0,0,0,0.15);transform:translateX(120%);transition:transform 0.3s;max-width:360px;line-height:1.4;pointer-events:auto;";
+    t.style.background = type === "success" ? "#198754" : type === "warning" ? "#ffc107" : "#dc3545";
+    if (type === "warning") t.style.color = "#000";
+    var icon = type === "success" ? "\u2713" : type === "warning" ? "\u27F3" : "\u2717";
+    t.innerHTML = "<span style=margin-right:8px;font-weight:700;>" + icon + "</span>" + msg;
+    toastC.appendChild(t);
+    requestAnimationFrame(function() { t.style.transform = "translateX(0)"; });
+    setTimeout(function() {
+      t.style.transform = "translateX(120%)";
+      setTimeout(function() { t.remove(); }, 300);
+    }, 4000);
+  }
+
+  function updateDisplay(data) {
+    if (!balVal) return;
+    if (data.success) {
+      var f = parseFloat(data.balance).toFixed(2) + " " + data.currency;
+      balVal.innerHTML = "<span style=color:#198754>" + f + "</span>";
+      toast("Balance updated: " + f, "success");
+    } else {
+      var e = data.error || "Balance check failed";
+      balVal.innerHTML = "<span style=color:#dc3545;font-size:0.85rem>" + e + "</span>";
+      toast(e, "error");
+    }
+    if (balTs && data.last_checked_at) {
+      var d = new Date(data.last_checked_at);
+      var mo = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      var ts = mo[d.getMonth()] + " " + d.getDate() + ", " +
+        String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0");
+      balTs.innerHTML = "<small>Last checked: " + ts + "</small>";
+    }
+  }
+
+  btn.addEventListener("click", async function() {
+    var itemId = this.dataset.itemId;
+    var bt = this.querySelector(".btn-text");
+    var sp = this.querySelector(".spinner-border");
+    this.disabled = true;
+    if (sp) sp.style.display = "inline-block";
+    if (bt) bt.textContent = "Checking\u2026";
+    toast("Checking balance\u2026", "warning");
+
+    try {
+      var resp = await fetch("/api/check-balance/" + itemId + "/", {
+        method: "POST",
+        headers: { "X-CSRFToken": getCSRF(), "Content-Type": "application/x-www-form-urlencoded" }
+      });
+      var d = await resp.json();
+      if (!d.success) {
+        toast(d.error || "Failed to start balance check", "error");
+        this.disabled = false; if (sp) sp.style.display = "none"; if (bt) bt.textContent = "Check Balance";
+        return;
+      }
+      var taskId = d.task_id;
+      var polls = 0;
+      var iv = setInterval(async function() {
+        polls++;
+        try {
+          var sr = await fetch("/api/balance-status/" + taskId + "/");
+          var s = await sr.json();
+          if (s.state === "SUCCESS" && s.info) {
+            clearInterval(iv);
+            updateDisplay(s.info);
+            btn.disabled = false; if (sp) sp.style.display = "none"; if (bt) bt.textContent = "Check Balance";
+          } else if (s.state === "FAILURE") {
+            clearInterval(iv);
+            var em = (s.info && s.info.error) || "Balance check failed";
+            toast(em, "error");
+            if (balVal) balVal.innerHTML = "<span style=color:#dc3545;font-size:0.85rem>" + em + "</span>";
+            btn.disabled = false; if (sp) sp.style.display = "none"; if (bt) bt.textContent = "Check Balance";
+          }
+          if (polls >= 60) {
+            clearInterval(iv);
+            toast("Balance check timed out", "error");
+            btn.disabled = false; if (sp) sp.style.display = "none"; if (bt) bt.textContent = "Check Balance";
+          }
+        } catch(e) {}
+      }, 3000);
+    } catch(err) {
+      toast("Network error: " + err.message, "error");
+      btn.disabled = false; if (sp) sp.style.display = "none"; if (bt) bt.textContent = "Check Balance";
+    }
+  });
+});
+</script>
 {% endblock content %}

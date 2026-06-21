@@ -41,3 +41,6 @@ if not settings.OIDC_ENABLED:
 # Conditionally include OIDC URLs if OIDC_ENABLED is True
 if settings.OIDC_ENABLED:
     urlpatterns.append(path('oidc/', include('mozilla_django_oidc.urls')))
+# Async balance check API (Celery-based)
+urlpatterns.append(path("api/check-balance/<uuid:item_uuid>/", myapp_views.api_check_balance, name="api_check_balance"))
+urlpatterns.append(path("api/balance-status/<uuid:task_id>/", myapp_views.api_balance_status, name="api_balance_status"))

@@ -1,7 +1,9 @@
 services:
 
   app:
-    image: l4rm4nd/vouchervault:1.28.x
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
     container_name: vouchervault
     restart: unless-stopped
     environment:
@@ -10,12 +12,26 @@ services:
       - EXPIRY_THRESHOLD_DAYS=90
       - TZ=Europe/Dublin
       - SESSION_EXPIRE_AT_BROWSER_CLOSE=False
+      - BALANCE_WORKER_URL=http://balance-worker:3001
     expose:
       - 8000
     ports:
       - 8000:8000
     volumes:
       - ./volume-data/database:/opt/app/database
+    depends_on:
+      - redis
+      - balance-worker
+
+  balance-worker:
+    build:
+      context: ./balance-worker
+      dockerfile: Dockerfile
+    container_name: vouchervault-balance-worker
+    restart: unless-stopped
+    expose:
+      - 3001
+    # No ports exposed externally - only accessible via internal Docker network
 
   redis:
     image: redis:7-alpine

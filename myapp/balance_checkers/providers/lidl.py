@@ -1,16 +1,18 @@
 """
 Lidl Ireland gift card balance checker.
 
-Checks balance via Lidl's internal JSON API endpoint.
-No login required — just card number and PIN.
+Two modes:
+1. Automated via balance-worker service (recommended) — uses Playwright to solve
+   Friendly Captcha and retrieve balance.
+2. Direct API call with pre-obtained captcha token (legacy).
 
-Endpoint: POST https://www.lidl.ie/api/giftcards/balance
-Payload:  {"cardNumber": "...", "pin": "..."}
-Response: {"status": "SUCCESS", "balance": 50.00, "currency": "EUR"}
+Endpoint: POST https://www.lidl.ie/explore/giftyBalanceV2/gifty
+Response: {"balance": {"amount": 5000, "currency": "EUR"}, "status": "ACTIVE"}
+Balance amount is in cents (5000 = €50.00).
 """
 
-import re
 import json
+import os
 import requests
 from typing import Optional
 
@@ -21,66 +23,33 @@ class LidlIEProvider(BaseBalanceChecker):
     """Lidl Ireland gift card balance checker."""
 
     display_name = "Lidl Ireland"
-    base_url = "https://www.lidl.ie/gift-cards/"
-    
-    # Known API endpoints to try (in order)
-    API_ENDPOINTS = [
-        "https://www.lidl.ie/api/giftcards/balance",
-        "https://giftcard.lidl.ie/api/v1/balance",
-        "https://www.lidl.ie/gift-cards/check-balance",
-    ]
+    base_url = "https://www.lidl.ie/c/gift-card-balance-check/s10073374"
+    api_endpoint = "https://www.lidl.ie/explore/giftyBalanceV2/gifty"
 
-    def _fetch_csrf_token(self, session: requests.Session) -> Optional[str]:
-        """
-        Fetch the Lidl gift cards page and extract CSRF token.
-        Returns None if token can't be found.
-        """
-        headers = {
-            'User-Agent': (
-                'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
-                'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 '
-                'Mobile/15E148 Safari/604.1'
-            ),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-IE,en;q=0.9',
-        }
-        
-        # Track last error for fallback message
-        last_error = 'All API endpoints failed'
-        try:
-            resp = session.get(self.base_url, headers=headers, timeout=15)
-            resp.raise_for_status()
-            
-            # Try to find CSRF token in meta tag
-            match = re.search(
-                r'<meta\s+name=["\']csrf-token["\']\s+content=["\']([^"\']+)["\']',
-                resp.text,
-                re.IGNORECASE
-            )
-            if match:
-                return match.group(1)
-            
-            # Try to find it in a script tag or data attribute
-            match = re.search(
-                r'csrfToken["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-                resp.text,
-            )
-            if match:
-                return match.group(1)
-            
-            return None
-            
-        except requests.RequestException as e:
-            return None
+    def __init__(self):
+        self.balance_worker_url = os.environ.get(
+            "BALANCE_WORKER_URL",
+            "http://balance-worker:3001"  # default Docker network name
+        )
 
-    def check_balance(self, card_number: str, pin: str) -> BalanceResult:
+    def check_balance(
+        self, card_number: str, pin: str,
+        frc_captcha_token: Optional[str] = None,
+        **kwargs
+    ) -> BalanceResult:
         """
         Check Lidl gift card balance.
-        
+
+        Uses the balance-worker service by default (Playwright automation
+        handles Friendly Captcha). Falls back to direct API call if a
+        captcha token is provided (legacy browser-based flow).
+
         Args:
-            card_number: The 16-digit gift card number
+            card_number: The gift card number (redeem_code)
             pin: The PIN/security code
-            
+            frc_captcha_token: Optional. If provided, calls the Lidl API
+                               directly with this token.
+
         Returns:
             BalanceResult with balance or error
         """
@@ -92,82 +61,197 @@ class LidlIEProvider(BaseBalanceChecker):
         if not pin:
             return BalanceResult(success=False, error="PIN is required")
 
-        session = requests.Session()
-        
-        # First, fetch the page to get CSRF token
-        csrf_token = self._fetch_csrf_token(session)
-        
-        # Build shared headers
-        headers = {
-            'User-Agent': (
-                'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
-                'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 '
-                'Mobile/15E148 Safari/604.1'
-            ),
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-IE,en;q=0.9',
-            'Content-Type': 'application/json',
-            'Origin': 'https://www.lidl.ie',
-            'Referer': self.base_url,
-        }
-        
-        if csrf_token:
-            headers['X-CSRFToken'] = csrf_token
+        # If a captcha token was provided from the frontend, use the direct API
+        if frc_captcha_token:
+            return self._check_via_api(card_number, pin, frc_captcha_token)
 
-        # Prepare the API payload
+        # Otherwise, use the automated balance-worker service
+        return self._check_via_worker(card_number, pin)
+
+    def _check_via_worker(self, card_number: str, pin: str) -> BalanceResult:
+        """
+        Check balance via the Playwright-powered balance-worker service.
+        The worker handles Friendly Captcha automatically.
+        """
+        worker_url = f"{self.balance_worker_url}/check-lidl-balance"
+
+        try:
+            resp = requests.post(
+                worker_url,
+                json={"cardNumber": card_number, "pin": pin},
+                timeout=300,  # captcha can take 15-60s + browser startup
+            )
+
+            if resp.status_code == 200:
+                data = resp.json()
+                return BalanceResult(
+                    success=data.get("success", False),
+                    balance=data.get("balance"),
+                    currency=data.get("currency", "EUR"),
+                    error=data.get("error"),
+                )
+            elif resp.status_code == 502:
+                return BalanceResult(
+                    success=False,
+                    error="Balance worker is starting up. Please try again in a moment."
+                )
+            elif resp.status_code == 503:
+                return BalanceResult(
+                    success=False,
+                    error="Balance worker is busy. Please try again shortly."
+                )
+            else:
+                try:
+                    err_data = resp.json()
+                    return BalanceResult(
+                        success=False,
+                        error=err_data.get("error", f"Worker error (HTTP {resp.status_code})")
+                    )
+                except (ValueError, KeyError):
+                    return BalanceResult(
+                        success=False,
+                        error=f"Balance worker returned HTTP {resp.status_code}"
+                    )
+
+        except requests.ConnectionError:
+            return BalanceResult(
+                success=False,
+                error="Could not connect to balance worker. Is the service running?"
+            )
+        except requests.Timeout:
+            return BalanceResult(
+                success=False,
+                error="Balance check timed out after 5 minutes. Please try again."
+            )
+        except requests.RequestException as e:
+            return BalanceResult(
+                success=False,
+                error=f"Balance worker request failed: {str(e)}"
+            )
+        except (json.JSONDecodeError, ValueError) as e:
+            return BalanceResult(
+                success=False,
+                error=f"Unexpected response from balance worker: {str(e)}"
+            )
+
+    def _check_via_api(
+        self, card_number: str, pin: str,
+        frc_captcha_token: str
+    ) -> BalanceResult:
+        """
+        Check balance by calling the Lidl API directly with a pre-obtained
+        Friendly Captcha token. Used when the frontend provides a token
+        (legacy flow).
+        """
+        # Build API payload
         payload = {
             "cardNumber": card_number,
-            "pin": pin,
+            "pinNumber": pin,
+            "country": "IE",
+            "locale": "en-IE",
+            "frcCaptchaToken": frc_captcha_token,
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Origin": "https://www.lidl.ie",
+            "Referer": self.base_url,
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-IE,en;q=0.9",
         }
 
         try:
-            for endpoint in self.API_ENDPOINTS:
-                resp = session.post(
-                    endpoint,
-                    json=payload,
-                    headers=headers,
-                    timeout=15,
-                )
-            
-                # 404 = wrong endpoint, try next
-                if resp.status_code == 404:
-                    last_error = f"Endpoint not found: {endpoint}"
-                    continue
-                
-                # Handle specific HTTP errors
-                if resp.status_code == 401 or resp.status_code == 403:
+            resp = requests.post(
+                self.api_endpoint,
+                json=payload,
+                headers=headers,
+                timeout=30,
+            )
+
+            # Handle HTTP errors
+            if resp.status_code == 400:
+                try:
+                    err_data = resp.json()
+                    msg = err_data.get("error", "Bad request")
+                    return BalanceResult(success=False, error=msg)
+                except (ValueError, KeyError):
+                    return BalanceResult(
+                        success=False,
+                        error="Invalid request. Check card number and PIN."
+                    )
+
+            if resp.status_code in (401, 403):
                 return BalanceResult(
                     success=False,
                     error="Invalid card number or PIN. Please check and try again."
                 )
+
             if resp.status_code == 429:
                 return BalanceResult(
                     success=False,
                     error="Rate limited. Please wait a moment before trying again."
                 )
-            if resp.status_code == 503:
-                return BalanceResult(
-                    success=False,
-                    error="Balance check service temporarily unavailable. Try again later."
-                )
-            
+
             resp.raise_for_status()
-            
+
             # Parse response
             data = resp.json()
-            
-            if data.get('status') == 'SUCCESS':
-                return BalanceResult(
-                    success=True,
-                    balance=float(data['balance']),
-                    currency=data.get('currency', 'EUR'),
-                )
-            else:
+
+            # Check for captcha error
+            if data.get("error") == "frcCAPTCHA verification failed":
                 return BalanceResult(
                     success=False,
-                    error=data.get('message', data.get('error', 'Unknown error occurred'))
+                    error="Captcha verification failed. Please try again."
                 )
-                
+
+            # Success: balance is in cents
+            if "balance" in data and isinstance(data["balance"], dict):
+                amount_cents = data["balance"].get("amount")
+                currency = data["balance"].get("currency", "EUR")
+                status = data.get("status", "")
+
+                if amount_cents is not None:
+                    balance = float(amount_cents) / 100.0
+
+                    if status in ("ACTIVE", "READY"):
+                        return BalanceResult(
+                            success=True,
+                            balance=balance,
+                            currency=currency,
+                        )
+                    else:
+                        status_map = {
+                            "BLOCKED": "Card is blocked",
+                            "EXPIRED": "Card has expired",
+                            "CLOSED": "Card is closed",
+                        }
+                        msg = status_map.get(
+                            status,
+                            f"Card status: {status}"
+                        )
+                        return BalanceResult(
+                            success=False,
+                            error=msg,
+                            balance=balance,
+                            currency=currency,
+                        )
+                else:
+                    return BalanceResult(
+                        success=False,
+                        error="Could not read balance amount from response."
+                    )
+            else:
+                error_msg = data.get(
+                    "error",
+                    data.get("message", "Unknown error occurred")
+                )
+                return BalanceResult(success=False, error=error_msg)
+
         except requests.Timeout:
             return BalanceResult(
                 success=False,
