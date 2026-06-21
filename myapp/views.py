@@ -338,6 +338,30 @@ def view_item(request, item_uuid):
     else:
         form = TransactionForm(item=item)
     
+    # Check for pending balance checks that completed while user was away
+    pending = request.session.get("pending_balance_checks", {})
+    item_key = str(item.id)
+    if item_key in pending:
+        from celery.result import AsyncResult
+        task_id = pending[item_key]["task_id"]
+        task_result = AsyncResult(task_id)
+        if task_result.state == "SUCCESS":
+            data = task_result.result
+            if data and data.get("success"):
+                formatted = f"{data['balance']:.2f} {data['currency']}"
+                messages.success(request, _("Balance updated: %(balance)s") % {'balance': formatted})
+            elif data and data.get("error"):
+                messages.error(request, data["error"])
+            else:
+                messages.error(request, _("Balance check failed."))
+            del pending[item_key]
+            request.session["pending_balance_checks"] = pending
+        elif task_result.state == "FAILURE":
+            messages.error(request, _("Balance check failed."))
+            del pending[item_key]
+            request.session["pending_balance_checks"] = pending
+        # If PENDING, leave it in session for next page load
+    
     context = {
         'item': item,
         'transactions': transactions,
@@ -1045,6 +1069,11 @@ def api_check_balance(request, item_uuid):
     
     # Launch async task
     task = check_balance_task.delay(str(item.id))
+    
+    # Store pending check in session so the next page load can show a notification
+    pending = request.session.get("pending_balance_checks", {})
+    pending[str(item.id)] = {"task_id": task.id}
+    request.session["pending_balance_checks"] = pending
     
     return JsonResponse({
         "success": True,
