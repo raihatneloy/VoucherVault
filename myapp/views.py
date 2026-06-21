@@ -326,10 +326,7 @@ def view_item(request, item_uuid):
     is_shared = item.shared_with.exists()
 
     transactions = item.transactions.all()
-    if item.live_balance is not None:
-        total_value = item.live_balance
-    else:
-        total_value = item.value + sum(t.value for t in transactions)
+    total_value = item.value + sum(t.value for t in transactions)
     
     if request.method == 'POST':
         if not is_owner:

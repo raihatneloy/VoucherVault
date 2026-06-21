@@ -1184,6 +1184,9 @@ body.dark-mode .balance-toast {
                 {% elif item.value_type == "multiplier" %}
                 <i class="bi bi-x-lg"></i> {% trans "Multiplier" %}
                 {% else %}
+                {% if item.type == "giftcard" and item.balance_checker != "none" %}
+                <i class="bi bi-wallet2"></i> {% trans "Loaded" %}
+                {% else %}
                 <i class="bi bi-wallet2"></i> {% trans "Value" %}
                 {% endif %}
               </div>
