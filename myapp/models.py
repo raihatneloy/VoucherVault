@@ -109,6 +109,18 @@ class Item(models.Model):
     is_pinned = models.BooleanField(default=False)
     currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES, default='EUR')
 
+    # Ireland live balance checking
+    BALANCE_CHECKER_CHOICES = (
+        ('none', 'None (manual tracking)'),
+        ('lidl_ie', 'Lidl Ireland'),
+        ('dunnes_ie', 'Dunnes Stores Ireland'),
+        ('supervalu_ie', 'SuperValu Ireland'),
+        ('tesco_ie', 'Tesco Ireland'),
+    )
+    balance_checker = models.CharField(max_length=20, choices=BALANCE_CHECKER_CHOICES, default='none')
+    live_balance = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, default=None)
+    last_checked_at = models.DateTimeField(blank=True, null=True, default=None)
+
     def __str__(self):
         return self.name
 

@@ -941,6 +941,131 @@ body.dark-mode .action-btn-secondary {
 body.dark-mode .action-btn-secondary:hover {
   background: #5a6578;
 }
+
+/* Live Balance Styles */
+.live-balance-section {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: var(--field-bg, #f0f9f0);
+  border-radius: 10px;
+  border: 1px solid #c3e6c3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.live-balance-section.error {
+  background: var(--field-bg, #fff3f3);
+  border-color: #f5c2c2;
+}
+
+.live-balance-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.live-balance-label {
+  font-size: 0.75rem;
+  color: #6c757d;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.live-balance-amount {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #198754;
+}
+
+.live-balance-section.error .live-balance-amount {
+  color: #dc3545;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.live-balance-timestamp {
+  font-size: 0.7rem;
+  color: #999;
+}
+
+.check-balance-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  border: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.check-balance-btn {
+  background: #4154f1;
+  color: white;
+}
+
+.check-balance-btn:hover:not(:disabled) {
+  background: #3344d1;
+  transform: translateY(-1px);
+}
+
+.check-balance-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.check-balance-btn .spinner {
+  display: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+.check-balance-btn.loading .spinner {
+  display: inline-block;
+}
+
+.check-balance-btn.loading .btn-text {
+  display: none;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+body.dark-mode .live-balance-section {
+  background: #1a3a1a;
+  border-color: #2a5a2a;
+}
+
+body.dark-mode .live-balance-section.error {
+  background: #3a1a1a;
+  border-color: #5a2a2a;
+}
+
+body.dark-mode .live-balance-amount {
+  color: #4ade80;
+}
+
+body.dark-mode .live-balance-section.error .live-balance-amount {
+  color: #f87171;
+}
+
+body.dark-mode .live-balance-timestamp {
+  color: #666;
+}
 </style>
 
 <div class="detail-header">
@@ -1044,6 +1169,26 @@ body.dark-mode .action-btn-secondary:hover {
               </div>
             </div>
             {% endif %}
+
+            {% if item.type == "giftcard" and item.balance_checker != "none" %}
+            <div class="detail-field" id="live-balance-field">
+              <div class="detail-field-label">
+                <i class="bi bi-arrow-repeat"></i> {% trans "Live Balance" %}
+              </div>
+              <div class="detail-field-value" id="live-balance-value">
+                {% if item.live_balance is not None %}
+                {{ item.live_balance|floatformat:2 }} {{ item.currency }}
+                {% else %}
+                <span class="text-muted">{% trans "Not checked yet" %}</span>
+                {% endif %}
+              </div>
+              {% if item.last_checked_at %}
+              <div class="live-balance-timestamp" id="live-balance-timestamp">
+                <small>{% trans "Last checked" %}: {{ item.last_checked_at|date:"M d, H:i" }}</small>
+              </div>
+              {% endif %}
+            </div>
+            {% endif %}
           </div>
           
           <!-- Description -->
@@ -1066,6 +1211,13 @@ body.dark-mode .action-btn-secondary:hover {
             <a href="{% url 'share_item' item.id %}" class="action-btn action-btn-success">
               <i class="bi bi-share"></i> {% trans "Share" %}
             </a>
+            {% if item.type == "giftcard" and item.balance_checker != "none" and not item.is_used %}
+            <button type="button" id="check-balance-btn" class="action-btn action-btn-primary" data-item-id="{{ item.id }}">
+              <i class="bi bi-arrow-repeat"></i>
+              <span class="btn-text">{% trans "Check Balance" %}</span>
+              <span class="spinner"></span>
+            </button>
+            {% endif %}
             {% if item.type != "loyaltycard" %}
             <form action="{% url 'toggle_item_status' item.id %}" method="post" style="display:contents;">
               {% csrf_token %}
@@ -1429,5 +1581,82 @@ document.addEventListener("DOMContentLoaded", function() {
   closeBtn?.addEventListener('click', closeOverlay);
 });
 </script>
+
+{% if item.type == "giftcard" and item.balance_checker != "none" and not item.is_used %}
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  const checkBtn = document.getElementById('check-balance-btn');
+  const balanceValue = document.getElementById('live-balance-value');
+  const balanceTimestamp = document.getElementById('live-balance-timestamp');
+  const balanceField = document.getElementById('live-balance-field');
+  
+  if (!checkBtn) return;
+  
+  // Get CSRF token from the cookie
+  function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+      const cookies = document.cookie.split(';');
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+  
+  async function checkBalance() {
+    const itemId = checkBtn.dataset.itemId;
+    checkBtn.disabled = true;
+    checkBtn.classList.add('loading');
+    
+    // Reset error styling
+    if (balanceField) {
+      balanceField.closest('.detail-field')?.classList.remove('error');
+    }
+    
+    try {
+      const response = await fetch('/items/' + itemId + '/check-balance/', {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': getCookie('VVSESS') || getCookie('csrftoken'),
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        const formattedBalance = parseFloat(data.balance).toFixed(2) + ' ' + data.currency;
+        balanceValue.innerHTML = '<span style="color:#198754">' + formattedBalance + '</span>';
+        
+        if (balanceTimestamp) {
+          const d = new Date(data.last_checked_at);
+          balanceTimestamp.innerHTML = '<small>{% trans "Last checked" %}: ' + 
+            d.toLocaleDateString('en-IE', { month: 'short', day: 'numeric' }) + ', ' +
+            d.toLocaleTimeString('en-IE', { hour: '2-digit', minute: '2-digit' }) + '</small>';
+        }
+      } else {
+        const errorMsg = data.error || '{% trans "Balance check failed" %}';
+        balanceValue.innerHTML = '<span style="color:#dc3545;font-size:0.85rem">' + errorMsg + '</span>';
+        if (balanceField) {
+          balanceField.closest('.detail-field')?.classList.add('error');
+        }
+      }
+    } catch (err) {
+      balanceValue.innerHTML = '<span style="color:#dc3545;font-size:0.85rem">{% trans "Network error" %}</span>';
+    } finally {
+      checkBtn.disabled = false;
+      checkBtn.classList.remove('loading');
+    }
+  }
+  
+  checkBtn.addEventListener('click', checkBalance);
+});
+</script>
+{% endif %}
 
 {% endblock content %}

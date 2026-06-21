@@ -27,6 +27,8 @@ from django.db.models import Count, Sum, Q, F, ExpressionWrapper, DecimalField
 from django.db.models.functions import Coalesce
 from django.db.models import Value
 from django.utils.text import get_valid_filename
+from myapp.balance_checkers import get_provider
+
 
 apprise_txt = _('Apprise URLs were already configured. Will not display them again here to protect secrets. You can freely re-configure the URLs now and hit update though.')
 
@@ -931,3 +933,41 @@ def toggle_view_mode(request):
         return JsonResponse({'success': True, 'view_mode': preferences.view_mode})
     
     return redirect('show_items')
+
+@login_required
+@require_POST
+def check_balance(request, item_uuid):
+    """Check the live balance of a gift card via its configured provider."""
+    try:
+        item = Item.objects.get(id=item_uuid, user=request.user)
+    except Item.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Item not found'}, status=404)
+    
+    # Only gift cards with a balance checker configured
+    if item.type != 'giftcard':
+        return JsonResponse({'success': False, 'error': 'Balance check is only available for gift cards'})
+    
+    if item.balance_checker == 'none' or not item.balance_checker:
+        return JsonResponse({'success': False, 'error': 'No balance checker configured for this item'})
+    
+    # Get the provider
+    provider = get_provider(item.balance_checker)
+    if not provider:
+        return JsonResponse({'success': False, 'error': f'Unknown balance checker: {item.balance_checker}'})
+    
+    # Check balance
+    result = provider.check_balance(item.redeem_code, item.pin or '')
+    
+    # Update item with results
+    if result.success:
+        item.live_balance = result.balance
+    item.last_checked_at = timezone.now()
+    item.save(update_fields=['live_balance', 'last_checked_at'])
+    
+    return JsonResponse({
+        'success': result.success,
+        'balance': result.balance,
+        'currency': result.currency,
+        'error': result.error,
+        'last_checked_at': item.last_checked_at.isoformat() if item.last_checked_at else None,
+    })
