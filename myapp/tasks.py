@@ -51,8 +51,15 @@ def check_item_balance(self, item_uuid):
 
         if result.success:
             item.live_balance = result.balance
-        item.last_checked_at = timezone.now()
-        item.save(update_fields=["live_balance", "last_checked_at"])
+            # Auto-mark as used when balance is zero
+            if item.live_balance is not None and item.live_balance <= 0:
+                item.is_used = True
+                item.save(update_fields=["live_balance", "last_checked_at", "is_used"])
+            else:
+                item.save(update_fields=["live_balance", "last_checked_at"])
+        else:
+            item.last_checked_at = timezone.now()
+            item.save(update_fields=["last_checked_at"])
 
         return {
             "success": result.success,

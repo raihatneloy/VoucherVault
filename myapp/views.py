@@ -115,8 +115,11 @@ def dashboard(request):
             single_currency = next(iter(currencies_used))
             total_value = 0
             for item in items:
-                transactions_sum = Transaction.objects.filter(item=item).aggregate(Sum('value'))['value__sum'] or 0
-                total_value += float(item.value) + float(transactions_sum)
+                if item.live_balance is not None:
+                    total_value += float(item.live_balance)
+                else:
+                    transactions_sum = Transaction.objects.filter(item=item).aggregate(Sum('value'))['value__sum'] or 0
+                    total_value += float(item.value) + float(transactions_sum)
             total_value = round(total_value, 2)
             total_currency = single_currency
         elif fixer_api_key:
@@ -125,8 +128,11 @@ def dashboard(request):
             if rates:
                 total_value = 0
                 for item in items:
-                    transactions_sum = Transaction.objects.filter(item=item).aggregate(Sum('value'))['value__sum'] or 0
-                    item_value = float(item.value) + float(transactions_sum)
+                    if item.live_balance is not None:
+                        item_value = float(item.live_balance)
+                    else:
+                        transactions_sum = Transaction.objects.filter(item=item).aggregate(Sum('value'))['value__sum'] or 0
+                        item_value = float(item.value) + float(transactions_sum)
                     converted = convert_currency(item_value, item.currency, default_currency, rates)
                     if converted is None:
                         currency_conversion_failed = True
@@ -268,8 +274,11 @@ def show_items(request):
 
     for item in items:       
         # Calculate current value
-        transactions_sum = Transaction.objects.filter(item=item).aggregate(Sum('value'))['value__sum'] or 0
-        current_value = item.value + transactions_sum
+        if item.live_balance is not None:
+            current_value = item.live_balance
+        else:
+            transactions_sum = Transaction.objects.filter(item=item).aggregate(Sum('value'))['value__sum'] or 0
+            current_value = item.value + transactions_sum
 
         items_with_qr.append({
             'item': item,
@@ -317,7 +326,10 @@ def view_item(request, item_uuid):
     is_shared = item.shared_with.exists()
 
     transactions = item.transactions.all()
-    total_value = item.value + sum(t.value for t in transactions)
+    if item.live_balance is not None:
+        total_value = item.live_balance
+    else:
+        total_value = item.value + sum(t.value for t in transactions)
     
     if request.method == 'POST':
         if not is_owner:
@@ -1019,8 +1031,15 @@ def check_balance(request, item_uuid):
         
         if result.success:
             item.live_balance = result.balance
-        item.last_checked_at = timezone.now()
-        item.save(update_fields=['live_balance', 'last_checked_at'])
+            # Auto-mark as used when balance is zero
+            if item.live_balance is not None and item.live_balance <= 0:
+                item.is_used = True
+                item.save(update_fields=['live_balance', 'last_checked_at', 'is_used'])
+            else:
+                item.save(update_fields=['live_balance', 'last_checked_at'])
+        else:
+            item.last_checked_at = timezone.now()
+            item.save(update_fields=['last_checked_at'])
     except Exception as e:
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return JsonResponse({'success': False, 'error': str(e)[:200]})
