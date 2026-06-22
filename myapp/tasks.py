@@ -51,6 +51,7 @@ def check_item_balance(self, item_uuid):
 
         if result.success:
             item.live_balance = result.balance
+            item.last_checked_at = timezone.now()
             # Auto-mark as used when balance is zero
             if item.live_balance is not None and item.live_balance <= 0:
                 item.is_used = True

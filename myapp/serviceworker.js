@@ -1,4 +1,4 @@
-const VERSION = "v2.0.0";
+const VERSION = "v2.1.0";
 const CACHE_NAME = `vouchervault-${VERSION}`;
 const RUNTIME_CACHE = `vouchervault-runtime-${VERSION}`;
 const DATA_CACHE = `vouchervault-data-${VERSION}`;
@@ -240,40 +240,26 @@ self.addEventListener("fetch", event => {
 
     const shouldSkipCache = skipCachePaths.some(path => url.pathname.includes(path));
 
-    // Handle API requests and page data - Cache First (but check expiration)
+    // Handle API requests and page data - Network First (fall back to cache when offline)
     if (API_CACHE_PATTERNS.some(pattern => pattern.test(url.pathname))) {
         event.respondWith(
             (async () => {
-                // Check if cache is expired
-                const expired = await isCacheExpired();
-                
-                if (expired) {
-                    console.log('[ServiceWorker] Cache expired, clearing and fetching fresh data:', url.pathname + url.search);
-                    await clearExpiredCache();
-                    
-                    // Go straight to network
-                    try {
-                        return await fetch(request);
-                    } catch (error) {
-                        // Network failed, fall back to offline page for navigation
-                        if (request.mode === 'navigate') {
-                            return caches.match('/offline/') || new Response('Offline', { status: 503 });
-                        }
-                        return new Response('Offline', { status: 503 });
-                    }
-                }
-
-                // Cache is still valid, use it
-                const cachedResponse = await caches.match(request);
-                if (cachedResponse) {
-                    console.log('[ServiceWorker] ✓ Serving API/page from cache:', url.pathname + url.search);
-                    return cachedResponse;
-                }
-
-                // No cache, go to network
                 try {
-                    return await fetch(request);
+                    const networkResponse = await fetch(request);
+                    // Cache fresh response for offline use
+                    if (networkResponse && networkResponse.ok) {
+                        const cache = await caches.open(PAGE_CACHE);
+                        cache.put(request, networkResponse.clone());
+                    }
+                    return networkResponse;
                 } catch (error) {
+                    // Network failed, try cache
+                    const cachedResponse = await caches.match(request);
+                    if (cachedResponse) {
+                        console.log('[ServiceWorker] ✓ Serving from cache (offline fallback):', url.pathname + url.search);
+                        return cachedResponse;
+                    }
+                    // Last resort: offline page for navigation
                     if (request.mode === 'navigate') {
                         return caches.match('/offline/') || new Response('Offline', { status: 503 });
                     }
@@ -284,7 +270,7 @@ self.addEventListener("fetch", event => {
         return;
     }
 
-    // Handle navigation requests - Cache First (but check expiration)
+    // Handle navigation requests - Network First (fall back to cache when offline)
     if (request.mode === 'navigate') {
         console.log('[ServiceWorker] Navigation request:', url.pathname + url.search);
 
@@ -315,102 +301,56 @@ self.addEventListener("fetch", event => {
             return;
         }
 
-        event.respondWith(
+                event.respondWith(
             (async () => {
-                // Check if cache is expired
-                const expired = await isCacheExpired();
-                
-                if (expired) {
-                    console.log('[ServiceWorker] Cache expired for navigation, clearing:', url.pathname + url.search);
-                    await clearExpiredCache();
-                    
-                    // Try network first since cache is expired
-                    try {
-                        return await fetch(request);
-                    } catch (error) {
-                        console.log('[ServiceWorker] ✗ Network failed and cache expired, showing offline page');
-                        const langMatch = url.pathname.match(/^\/(en|de|fr|it)/);
-                        const offlineUrl = langMatch ? `/${langMatch[1]}/offline/` : '/offline/';
-                        return caches.match(offlineUrl) || new Response(
-                            '<html><body><h1>Offline</h1><p>You are currently offline and the cache has expired.</p></body></html>',
-                            {
-                                status: 503,
-                                statusText: 'Service Unavailable',
-                                headers: new Headers({ 'Content-Type': 'text/html' })
-                            }
-                        );
+                // Network First: try fresh data, fall back to cache when offline
+                try {
+                    const networkResponse = await fetch(request);
+                    // Cache the fresh page in background for future offline use
+                    if (networkResponse && networkResponse.ok && !networkResponse.redirected) {
+                        const cache = await caches.open(PAGE_CACHE);
+                        cache.put(request, networkResponse.clone());
                     }
-                }
+                    return networkResponse;
+                } catch (error) {
+                    console.log('[ServiceWorker] Network failed, trying cached page:', url.pathname + url.search);
 
-                // Cache is still valid, try to use it
-                // Try to match with full URL (including query params)
-                let cachedResponse = await caches.match(request.url);
-                
-                if (cachedResponse) {
-                    const isRedirect = cachedResponse.type === 'opaqueredirect' || (cachedResponse.status >= 300 && cachedResponse.status < 400);
-                    if (!isRedirect) {
-                        console.log('[ServiceWorker] ✓ Found in cache:', url.pathname + url.search);
+                    // Try to serve from cache
+                    const cachedResponse = await caches.match(request.url);
+                    if (cachedResponse) {
+                        console.log('[ServiceWorker] Serving from cache (offline fallback):', url.pathname + url.search);
                         return cachedResponse;
                     }
-                    console.log('[ServiceWorker] ⊘ Ignoring cached redirect:', url.pathname + url.search);
-                    cachedResponse = null;
-                }
 
-                console.log('[ServiceWorker] ✗ Not in cache:', url.pathname + url.search);
-
-                // If URL has trailing ? with no params, try without it
-                if (request.url.endsWith('?')) {
-                    const urlWithoutQuestion = request.url.slice(0, -1);
-                    console.log('[ServiceWorker] Trying without trailing ?:', urlWithoutQuestion);
-                    const alt = await caches.match(urlWithoutQuestion);
-                    if (alt) {
-                        console.log('[ServiceWorker] ✓ Found alternative in cache');
-                        return alt;
+                    // For root page, check language-specific roots
+                    if (url.pathname === '/' || url.pathname === '') {
+                        const langCodes = [...SUPPORTED_LANGS];
+                        for (const lang of langCodes) {
+                            const alt = await caches.match('/' + lang + '/');
+                            if (alt) {
+                                console.log('[ServiceWorker] Serving cached language root: /' + lang + '/');
+                                return alt;
+                            }
+                        }
                     }
-                }
 
-                // For root page requests, check language-specific roots too
-                if (url.pathname === '/' || url.pathname === '') {
-                    console.log('[ServiceWorker] Root page requested, searching for language-specific root...');
-
-                    const langCodes = [...SUPPORTED_LANGS];
-                    const langPromises = langCodes.map(lang =>
-                        caches.match(`/${lang}/`).then(res => ({ lang, res }))
-                    );
-
-                    const results = await Promise.all(langPromises);
-                    const cached = results.find(r => r.res);
-                    if (cached) {
-                        console.log('[ServiceWorker] ✓ Found cached language root:', `/${cached.lang}/`);
-                        return cached.res;
-                    }
-                }
-
-                // No cache found, try network
-                try {
-                    return await fetch(request);
-                } catch (error) {
-                    console.log('[ServiceWorker] ✗ No cached page, showing offline page');
-
-                    // Try to get language-specific offline page first
+                    // Last resort: offline page
+                    console.log('[ServiceWorker] No cached page, showing offline page');
                     const langMatch = url.pathname.match(/^\/(en|de|fr|it)/);
-                    const offlineUrl = langMatch ? `/${langMatch[1]}/offline/` : '/offline/';
-
+                    var offlineUrl = langMatch ? '/' + langMatch[1] + '/offline/' : '/offline/';
                     const offlinePage = await caches.match(offlineUrl);
                     if (offlinePage) {
-                        console.log('[ServiceWorker] ✓ Serving offline page:', offlineUrl);
+                        console.log('[ServiceWorker] Serving offline page:', offlineUrl);
                         return offlinePage;
                     }
                     
-                    // Try generic offline page as fallback
                     const genericOffline = await caches.match('/offline/');
                     if (genericOffline) {
-                        console.log('[ServiceWorker] ✓ Serving generic offline page');
+                        console.log('[ServiceWorker] Serving generic offline page');
                         return genericOffline;
                     }
                     
-                    // Last resort: return a basic offline response
-                    console.log('[ServiceWorker] ✗ No offline page cached, using fallback HTML');
+                    console.log('[ServiceWorker] No offline page cached, using fallback HTML');
                     return new Response(
                         '<html><body><h1>Offline</h1><p>You are currently offline and this page is not cached.</p></body></html>',
                         {
@@ -421,8 +361,7 @@ self.addEventListener("fetch", event => {
                     );
                 }
             })()
-        );
-        return;
+        );        return;
     }
 
     // Handle static assets - Cache First strategy

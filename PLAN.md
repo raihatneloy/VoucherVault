@@ -14,7 +14,7 @@
 |----------|--------|----------|--------|
 | Lidl Ireland | JSON POST + Friendly Captcha | `lidl.ie/api/giftcards/balance` | ✅ Live |
 | Dunnes Stores | JSON POST | `dunnesstores.com/api/giftcards/balance/` | 🟡 Planned |
-| SuperValu | JSON POST | `supervalu.ie/api/giftcards/balance` | 🟡 Planned |
+| SuperValu | Playwright + reCAPTCHA v3 | `supervalu.ie/gift-cards/balance` (form POST) | ✅ Implemented |
 | Tesco Ireland | ASP.NET form | `tesco.ie/gift-cards/giftcardbalance/` | 🟡 Planned |
 | Aldi Ireland | 3rd-party route | BIN-based detection | 🔴 Deferred |
 
@@ -115,7 +115,7 @@ docker compose -f docker-compose.dev.yml build --no-cache
   - POSTs to `lidl.ie/api/giftcards/balance` with `{cardNumber, pinNumber, country, locale, frcCaptchaToken}`
   - Friendly Captcha handled via external `balance-worker` (Playwright sidecar)
 - [ ] **2.3 — Implement `DunnesIEProvider`**
-- [ ] **2.4 — Implement `SuperValuIEProvider`**
+- [x] **2.4 — Implement `SuperValuIEProvider`**
 - [ ] **2.5 — Implement `TescoIEProvider`**
 - [x] **2.6 — Build `ProviderRegistry`**
 
@@ -169,7 +169,7 @@ A separate Node.js service (Playwright-based) that solves Friendly Captcha and p
 ## Phase 5: Remaining Retailers
 
 - [ ] **5.1 — Implement `DunnesIEProvider`**
-- [ ] **5.2 — Implement `SuperValuIEProvider`**
+- [x] **5.2 — Implement `SuperValuIEProvider`**
 - [ ] **5.3 — Implement `TescoIEProvider`**
 - [ ] **5.4 — Test with real gift cards** 🎯
 
@@ -187,6 +187,16 @@ A separate Node.js service (Playwright-based) that solves Friendly Captcha and p
 ---
 
 ## Implementation Notes
+
+### SuperValu Ireland API (June 2026)
+
+- **Balance page**: `https://www.supervalu.ie/gift-cards/balance`
+- **Form POST**: `POST https://www.supervalu.ie/gift-cards/balance`
+- **Fields**: `c_number` (17-digit card), `verification_code` (4-digit PIN), `csrf_token`, `g-recaptcha-response`
+- **reCAPTCHA**: Google reCAPTCHA v3 (invisible, score-based)
+- **Playwright**: Requires headful mode via xvfb-run + system Chrome (`executablePath`) for v3 to pass.
+  Site's own jQuery handler calls `grecaptcha.execute()` on submit -- no manual token handling needed.
+- **No JSON API** -- balance check is an HTML form POST that re-renders the page with "Your balance" result.
 
 ### Lidl Ireland API (June 2026)
 
