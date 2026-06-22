@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
     command: python manage.py runserver 0.0.0.0:8000
     environment:
-      - DOMAIN=192.168.86.47
+      - DOMAIN=192.168.86.47,vouchers.amarbari.net,localhost
       - SECURE_COOKIES=False
       - EXPIRY_THRESHOLD_DAYS=90
       - TZ=Europe/Dublin
