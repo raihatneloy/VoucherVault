@@ -7,8 +7,7 @@ services:
     container_name: vouchervault
     restart: unless-stopped
     environment:
-      - DOMAIN=192.168.86.47,vouchers.amarbari.net
-      - SECURE_COOKIES=False
+      - DOMAIN=192.168.86.47
       - EXPIRY_THRESHOLD_DAYS=90
       - TZ=Europe/Dublin
       - SESSION_EXPIRE_AT_BROWSER_CLOSE=False
@@ -22,15 +21,6 @@ services:
     depends_on:
       - redis
       - balance-worker
-    # ── Traefik reverse proxy (via baps-oj-selfhost network) ──
-    networks:
-      - default
-      - baps-oj-selfhost
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.vouchervault.rule=Host(`vouchers.amarbari.net`)"
-      - "traefik.http.routers.vouchervault.entrypoints=web"
-      - "traefik.http.services.vouchervault.loadbalancer.server.port=8000"
 
   balance-worker:
     build:
@@ -47,8 +37,3 @@ services:
     restart: unless-stopped
     expose:
       - 6379
-
-networks:
-  baps-oj-selfhost:
-    external: true
-    name: baps-oj-selfhost
