@@ -427,12 +427,13 @@ if (cropCanvas) {
 // Scan cropped area button
 if (scanCroppedBtn) {
     scanCroppedBtn.addEventListener('click', async () => {
-        if (!currentImage || !cropCanvas) return;
+        if (!currentImage) { outputMessage.textContent = "Error: No image loaded. Please select the image again."; outputMessage.style.display = "block"; setTimeout(function(){ outputMessage.style.display = "none"; }, 5000); return; } if (!cropCanvas) { outputMessage.textContent = "Error: Crop canvas not found. Please refresh."; outputMessage.style.display = "block"; setTimeout(function(){ outputMessage.style.display = "none"; }, 5000); return; }
         
         // Validate selection
         const width = Math.abs(cropEndX - cropStartX);
         const height = Math.abs(cropEndY - cropStartY);
         
+        if (width === 0 && height === 0) { outputMessage.textContent = "Please drag on the image to select the barcode area first"; outputMessage.style.display = "block"; setTimeout(function(){ outputMessage.style.display = "none"; }, 4000); return; }
         if (width < 20 || height < 20) {
             outputMessage.textContent = "Please select a larger area";
             outputMessage.style.display = 'block';
@@ -540,7 +541,7 @@ if (scanCroppedBtn) {
             
         } catch (error) {
             console.error("Cropped scan error:", error);
-            outputMessage.textContent = "Could not detect barcode in selected area. Try selecting a different area.";
+            outputMessage.textContent = "Scan failed: " + (error.message || error).substring(0, 120);
             
             // Don't hide preview on error - let user see what was scanned and try again
             setTimeout(() => {
@@ -550,6 +551,19 @@ if (scanCroppedBtn) {
             scanCroppedBtn.disabled = false;
         }
     });
+}
+
+
+
+// ZXing availability check
+if (typeof ZXing === "undefined") {
+    var warnDiv = document.createElement("div");
+    warnDiv.style.cssText = "background:#dc3545;color:#fff;padding:12px 16px;border-radius:8px;margin:12px 0;font-size:0.9rem;text-align:center;";
+    warnDiv.textContent = "Barcode scanner library failed to load. Please refresh the page or clear your browser cache.";
+    var scanSection = document.getElementById("qrScannerSection");
+    if (scanSection && scanSection.parentNode) {
+        scanSection.parentNode.insertBefore(warnDiv, scanSection);
+    }
 }
 
 // Cancel crop button
@@ -583,4 +597,3 @@ if (resetSelectionBtn) {
         }
     });
 }
-
