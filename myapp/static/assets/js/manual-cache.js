@@ -7,7 +7,7 @@ class ManualCacheManager {
     constructor() {
         this.CACHE_DURATION = 48 * 60 * 60 * 1000; // 48 hours in milliseconds
         this.CACHE_KEY = 'offline_cache_timestamp';
-        this.VERSION = "v2.1.0";
+        this.VERSION = "v2.2.0";
         this.PAGE_CACHE_NAME = `vouchervault-pages-${this.VERSION}`;
         this.init();
     }
