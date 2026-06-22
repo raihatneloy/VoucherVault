@@ -1,28 +1,43 @@
 services:
 
   app:
-    image: l4rm4nd/vouchervault:1.28.x
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: vouchervault-dev
     container_name: vouchervault-dev
     restart: unless-stopped
-    entrypoint: python3
-    command: manage.py runserver 0.0.0.0:8000
+    command: python manage.py runserver 0.0.0.0:8000
     environment:
       - DOMAIN=192.168.86.47
       - SECURE_COOKIES=False
       - EXPIRY_THRESHOLD_DAYS=90
       - TZ=Europe/Dublin
       - SESSION_EXPIRE_AT_BROWSER_CLOSE=False
-      - PYTHONDONTWRITEBYTECODE=1
+      - BALANCE_WORKER_URL=http://balance-worker:3001
       - DEBUG=True
-    expose:
-      - 8000
+      - PYTHONDONTWRITEBYTECODE=1
     ports:
-      - 8000:8000
+      - "8000:8000"
     volumes:
       - ./volume-data/database:/opt/app/database
       - ./myapp:/opt/app/myapp
+      - ./myproject:/opt/app/myproject
+      - ./locale:/opt/app/locale
+      - ./manage.py:/opt/app/manage.py
     depends_on:
       - redis
+      - balance-worker
+
+  balance-worker:
+    build:
+      context: ./balance-worker
+      dockerfile: Dockerfile
+    image: vouchervault-balance-worker-dev
+    container_name: vouchervault-balance-worker-dev
+    restart: unless-stopped
+    expose:
+      - 3001
 
   redis:
     image: redis:7-alpine
